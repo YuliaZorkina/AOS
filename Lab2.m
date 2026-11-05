@@ -1,4 +1,4 @@
-clc; clear; close all;
+clc; clear; close all; мяу
 
 Nfft = 2048;                       % Размер FFT
 M_data = 16;                       % Модуляция данных: 16-QAM
