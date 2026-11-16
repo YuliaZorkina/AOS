@@ -7,8 +7,9 @@ CP_len = Nfft/4;                   % Длина CP = 512 отсчётов
 T_sym = 100e-6;                    % Длительность OFDM-символа, 100 мкс
 Fs = Nfft/T_sym;                   % Частота дискретизации, 20.48 МГц
 SNR_dB = 1:2:30;                   % Диапазон ОСШ, дБ
-NumOfdmSymbols = 200;              % Количество OFDM-символов
-NumSC_fad = 1200;
+NumOfdmSymbols = 500;              % Количество OFDM-символов
+NumSC = 1200;
+NumGuardSC = round((Nfft-NumSC)/2);
 
 Es = mean(abs(qammod(0:M_data-1, M_data)).^2) / Nfft;
 %% ПРОФИЛИ КАНАЛОВ EPA, EVA, ETU
@@ -57,29 +58,16 @@ for idxSC = 1:length(NumSC_list_dop)
     totalBits = NumOfdmSymbols*N_bits;
     errorBits = 0;
 
-    for sym = 1:NumOfdmSymbols
-
-        % Генерация битов и модуляция
-        data_bits = randi([0 1], N_bits, 1);
-
-        mod_data = qammod(data_bits, M_data,'InputType', 'bit', 'UnitAveragePower', true);
-
-        % Формирование OFDM-символа
-        Sp = zeros(Nfft,1);
-        Sp(NumGuardSC_dop+(1:NumSC_dop)) = mod_data;
-
-        Sig = ifft(ifftshift(Sp));
-        Sig_CP = [Sig(end-CP_len+1:end); Sig];
-
-        % Идеальный канал: без шума и искажений
-        Sig_rec = Sig_CP(CP_len+1:CP_len+Nfft);
-        Sp_rec = fftshift(fft(Sig_rec));
-
-        % Демодуляция в биты
-        demod_bits = qamdemod(Sp_rec(NumGuardSC_dop+(1:NumSC_dop)),M_data, 'OutputType', 'bit', 'UnitAveragePower', true);
-
-        errorBits = errorBits + sum(demod_bits(:) ~= data_bits(:));
-    end
+    data_bits = randi([0 1], N_bits, NumOfdmSymbols);
+    mod_data = qammod(data_bits, M_data, 'InputType', 'bit', 'UnitAveragePower', true);
+    Sp = zeros(Nfft, NumOfdmSymbols);
+    Sp(NumGuardSC_dop+(1:NumSC_dop), :) = mod_data;
+    Sig = ifft(ifftshift(Sp, 1), [], 1);
+    Sig_CP = [Sig(end-CP_len+1:end, :); Sig];
+    Sig_rec = Sig_CP(CP_len+1:CP_len+Nfft, :);
+    Sp_rec = fftshift(fft(Sig_rec, [], 1), 1);
+    demod_bits = qamdemod(Sp_rec(NumGuardSC_dop+(1:NumSC_dop), :), M_data, 'OutputType', 'bit', 'UnitAveragePower', true);
+    errorBits = sum(demod_bits(:) ~= data_bits(:));
 
     BER_no_channel(idxSC) = errorBits/totalBits;
 
@@ -99,28 +87,21 @@ ylim([1e-10 1]);
 
 %% ДОПОЛНИТЕЛЬНОЕ ЗАДАНИЕ 2: СПЕКТР OFDM-СИГНАЛА МЕТОДОМ УЭЛЧА
 
-fprintf('\nДополнительное задание 2: Спектр OFDM-сигнала\n');
-
-NumSC_spectr = 1200;
-NumGuardSC_spectr = round((Nfft-NumSC_spectr)/2);
-N_symbols_psd = 100;
-
-sig_len_noCP = Nfft*N_symbols_psd;
-sig_len_withCP = (Nfft+CP_len)*N_symbols_psd;
+sig_len_noCP = Nfft*NumOfdmSymbols;
+sig_len_withCP = (Nfft+CP_len)*NumOfdmSymbols;
 
 Sig_noCP_long = zeros(sig_len_noCP,1);
 Sig_withCP_long = zeros(sig_len_withCP,1);
 
-for sym = 1:N_symbols_psd
+for sym = 1:NumOfdmSymbols
 
     % Генерация OFDM-данных
-    data = randi([0 M_data-1], NumSC_spectr, 1);
+    data = randi([0 M_data-1], NumSC, 1);
 
-    mod_data = qammod(data, M_data, ...
-        'UnitAveragePower', true);
+    mod_data = qammod(data, M_data,'UnitAveragePower', true);
 
     Sp = zeros(Nfft,1);
-    Sp(NumGuardSC_spectr+(1:NumSC_spectr)) = mod_data;
+    Sp(NumGuardSC+(1:NumSC)) = mod_data;
 
     Sig = ifft(ifftshift(Sp));
 
@@ -130,8 +111,7 @@ for sym = 1:N_symbols_psd
 
     % Сигнал с CP
     idx_withCP = (sym-1)*(Nfft+CP_len)+1 : sym*(Nfft+CP_len);
-    Sig_withCP_long(idx_withCP) = ...
-        [Sig(end-CP_len+1:end); Sig];
+    Sig_withCP_long(idx_withCP) = [Sig(end-CP_len+1:end); Sig];
 end
 
 % Частота дискретизации нормирована к единице
@@ -167,11 +147,11 @@ clf;
 hold on;
 grid on;
 
-data = randi([0 M_data-1], NumSC_spectr, 1);
+data = randi([0 M_data-1], NumSC, 1);
 mod_data = qammod(data, M_data, 'UnitAveragePower', true);
 
 Sp = zeros(Nfft,1);
-Sp(NumGuardSC_spectr+(1:NumSC_spectr)) = mod_data;
+Sp(NumGuardSC+(1:NumSC)) = mod_data;
 
 amplitudes = abs(Sp);
 f_subcarriers = (-Nfft/2:Nfft/2-1)/Nfft;
@@ -192,13 +172,13 @@ clf;
 hold on;
 grid on;
 
-active_idx_spectr = NumGuardSC_spectr+(1:NumSC_spectr);
+active_idx_spectr = NumGuardSC+(1:NumSC);
 
 stem(f_subcarriers(active_idx_spectr),amplitudes(active_idx_spectr), 'b.', 'MarkerSize', 3);
 
 xlabel('Нормированная частота (f/Fs)');
 ylabel('|X(k)|');
-title(sprintf('Активные поднесущие (NumSC = %d)', NumSC_spectr));
+title(sprintf('Активные поднесущие (NumSC = %d)', NumSC));
 hold off;
 
 
@@ -306,7 +286,7 @@ Delta_f = Fs / Nfft;       % = 1/T_sym
 B_subcarrier = Delta_f;
 
 % Полоса активных поднесущих
-B_total = NumSC_fad * Delta_f;
+B_total = NumSC * Delta_f;
 
 % Длительность циклического префикса
 T_CP = CP_len / Fs;
@@ -361,11 +341,10 @@ end
 
 %% ДОП ЗАДАНИЕ 2.3-2.4: BER В КАНАЛАХ С ЗАМИРАНИЯМИ (EPA, EVA, ETU)
 fprintf('ДОП ЗАДАНИЕ 2.3-2.4: BER в каналах с замираниями\n');
-NumGuardSC_fad = round((Nfft - NumSC_fad)/2);
 
 pilot_step_fad = 16;
-pilot_idx_fad = 1:pilot_step_fad:NumSC_fad;
-data_idx_fad = setdiff(1:NumSC_fad, pilot_idx_fad);
+pilot_idx_fad = 1:pilot_step_fad:NumSC;
+data_idx_fad = setdiff(1:NumSC, pilot_idx_fad);
 
 nDataSymbols_fad = length(data_idx_fad);
 nPilots_fad = length(pilot_idx_fad);
@@ -394,7 +373,7 @@ rayleighchan_ETU = comm.RayleighChannel( ...
 channels_fad = {rayleighchan_EPA, rayleighchan_EVA, rayleighchan_ETU};
 
 % Количество независимых реализаций канала
-N_realizations = 10;
+N_realizations = 50;
 
 BER_fading = zeros(length(channels_fad), length(SNR_dB));
 
@@ -412,61 +391,47 @@ for ch_idx = 1:length(channels_fad)
         % Усреднение по реализациям канала
         for realization = 1:N_realizations
 
-            % Новое случайное состояние для каждой реализации
-            rng(1000 + realization);
-
             % Сброс состояния канала перед новой реализацией
             reset(channels_fad{ch_idx});
 
-            for sym = 1:NumOfdmSymbols
+            % Матричные вычисления
+            data_bits = randi([0 1], nDataSymbols_fad * log2(M_data), NumOfdmSymbols);
+            mod_data = qammod(data_bits, M_data, 'InputType', 'bit', 'UnitAveragePower', true);
+            pilot_bits = randi([0 1], nPilots_fad * log2(M_pilot), NumOfdmSymbols);
+            mod_pilots = qammod(pilot_bits, M_pilot, 'InputType', 'bit', 'UnitAveragePower', true);
 
-                % Информационные биты и QAM
-                data_bits = randi([0 1], nDataSymbols_fad * log2(M_data), 1);
-                mod_data = qammod(data_bits, M_data,'InputType', 'bit','UnitAveragePower', true);
+            Sp = zeros(Nfft, NumOfdmSymbols);
+            Sp(NumGuardSC + data_idx_fad, :) = mod_data;
+            Sp(NumGuardSC + pilot_idx_fad, :) = mod_pilots;
 
-                % Пилоты QPSK
-                pilot_bits = randi([0 1],nPilots_fad * log2(M_pilot), 1);
-                mod_pilots = qammod(pilot_bits, M_pilot, 'InputType', 'bit','UnitAveragePower', true);
+            Sig = ifft(ifftshift(Sp, 1), [], 1);
+            Sig_CP = [Sig(end-CP_len+1:end, :); Sig];
 
-                % Формирование OFDM-символа
-                Sp = zeros(Nfft, 1);
+            % Передача через канал 
+            Rx_Signal = channels_fad{ch_idx}(Sig_CP(:));
+            Rx_Signal = reshape(Rx_Signal, Nfft+CP_len, NumOfdmSymbols);
 
-                Sp(NumGuardSC_fad + data_idx_fad) = mod_data;
-                Sp(NumGuardSC_fad + pilot_idx_fad) = mod_pilots;
+            N0 = Es / SNR_linear;
+            sigma_noise = sqrt(N0/2);
+            noise = sigma_noise * (randn(size(Rx_Signal)) + 1j*randn(size(Rx_Signal)));
+            Rx_Signal = Rx_Signal + noise;
 
-                Sig = ifft(ifftshift(Sp));
-                Sig_CP = [Sig(end-CP_len+1:end); Sig];
+            % Приём OFDM-символа 
+            Sig_rec = Rx_Signal(CP_len+1:CP_len+Nfft, :);
+            Sp_rec = fftshift(fft(Sig_rec, [], 1), 1);
 
-                % Передача через канал
-                Rx_Signal = channels_fad{ch_idx}(Sig_CP);
+            % Оценка канала по пилотам
+            H_pilots = Sp_rec(NumGuardSC + pilot_idx_fad, :) ./ mod_pilots;
+            H_est = interp1(pilot_idx_fad, H_pilots, (1:NumSC)', 'linear', 'extrap');
+            Sp_eq = Sp_rec(NumGuardSC + data_idx_fad, :) ./ H_est(data_idx_fad, :);
 
-                % Добавление АБГШ
+            % Демодуляция
+            bits_rx = qamdemod(Sp_eq, M_data, 'OutputType', 'bit', 'UnitAveragePower', true);
 
-                % Мощность принятого сигнала до добавления шума
-                Ps = mean(abs(Rx_Signal).^2);
+            % Накопление ошибок
+            errorBits = errorBits + sum(data_bits(:) ~= bits_rx(:));
+            totalBits = totalBits + numel(data_bits);
 
-                N0 = Ps / SNR_linear;
-                sigma_noise = sqrt(N0/2);
-                noise = sigma_noise *(randn(size(Rx_Signal)) + 1j*randn(size(Rx_Signal)));
-                Rx_Signal = Rx_Signal + noise;
-
-                % Приём OFDM-символа
-                Sig_rec = Rx_Signal(CP_len+1:CP_len+Nfft);
-                Sp_rec = fftshift(fft(Sig_rec));
-
-                % Оценка канала по пилотам
-                H_pilots = Sp_rec(NumGuardSC_fad + pilot_idx_fad)./ mod_pilots;
-                H_est = interp1(pilot_idx_fad, H_pilots, (1:NumSC_fad)', 'linear', 'extrap');
-                Sp_eq = Sp_rec(NumGuardSC_fad + data_idx_fad) ./ H_est(data_idx_fad);
-
-                % Демодуляция
-                bits_rx = qamdemod(Sp_eq, M_data,'OutputType', 'bit','UnitAveragePower', true);
-
-                % Накопление ошибок
-                errorBits = errorBits + sum(data_bits ~= bits_rx);
-                totalBits = totalBits + length(data_bits);
-
-            end
         end
 
         % BER по всем реализациям
@@ -500,8 +465,8 @@ legend('Location', 'southwest');
 set(gca, 'YScale', 'log');
 ylim([1e-5 1]);
 hold off;
+
 %% ДОП ЗАДАНИЕ 2.5: СОЗВЕЗДИЕ ДО И ПОСЛЕ ЭКВАЛАЙЗЕРА
-fprintf('\nСозвездие до и после эквалайзера (канал EPA, SNR=15 дБ)\n');
 
 SNR_test = 25;
 SNR_linear_test = 10^(SNR_test/10);
@@ -517,8 +482,8 @@ mod_pilots = qammod(pilot_bits, M_pilot, 'InputType', 'bit', 'UnitAveragePower',
 % Матрица OFDM-символов в частотной области
 Sp = zeros(Nfft, NumOfdmSymbols);
 
-Sp(NumGuardSC_fad + data_idx_fad, :) = mod_data;
-Sp(NumGuardSC_fad + pilot_idx_fad, :) = mod_pilots;
+Sp(NumGuardSC + data_idx_fad, :) = mod_data;
+Sp(NumGuardSC + pilot_idx_fad, :) = mod_pilots;
 
 Sig = ifft(ifftshift(Sp, 1), [], 1);
 Sig_CP = [Sig(end-CP_len+1:end, :); Sig];
@@ -539,14 +504,14 @@ Sig_rec = Rx_matrix(CP_len+1:CP_len+Nfft, :);
 % Переход в частотную область
 Sp_rec = fftshift(fft(Sig_rec, [], 1), 1);
 
-constellation_before_eq = Sp_rec(NumGuardSC_fad + data_idx_fad, 1:min(3, NumOfdmSymbols));
+constellation_before_eq = Sp_rec(NumGuardSC + data_idx_fad, 1:min(3, NumOfdmSymbols));
 
 % Оценка канала по пилотам для каждого OFDM-символа
-H_pilots = Sp_rec(NumGuardSC_fad + pilot_idx_fad, :) ./ mod_pilots;
+H_pilots = Sp_rec(NumGuardSC + pilot_idx_fad, :) ./ mod_pilots;
 
-H_est = interp1(pilot_idx_fad, H_pilots, (1:NumSC_fad)', 'linear', 'extrap');
+H_est = interp1(pilot_idx_fad, H_pilots, (1:NumSC)', 'linear', 'extrap');
 
-received_data = Sp_rec(NumGuardSC_fad + data_idx_fad, :);
+received_data = Sp_rec(NumGuardSC + data_idx_fad, :);
 H_data = H_est(data_idx_fad, :);
 
 Sp_eq = received_data ./ H_data;
@@ -572,7 +537,6 @@ xlim([-3, 3]); ylim([-3, 3]);
 grid on;
 
 %% ДОП ЗАДАНИЕ 2.6: ДОПЛЕРОВСКИЕ СПЕКТРЫ EPA5, EVA70, ETU300
-fprintf('\nДОП ЗАДАНИЕ 2.6: Доплеровские спектры\n');
 
 fD_values_dop = [5 70 300];
 N_symbols_doppler = [100000, 30000, 20000];
@@ -624,8 +588,6 @@ for idx = 1:length(fD_values_dop)
 
     % Нормировка спектра в дБ
     Pxx_dB = 10*log10(Pxx / max(Pxx) + eps);
-
-    % Отображаем область вокруг доплеровского спектра
     mask = abs(f) <= 1.5*fD;
 
     plot(f(mask), Pxx_dB(mask), colors_dop{idx},'LineWidth', 1.5,'DisplayName', sprintf('%s, f_D=%d Гц',channel_names_dop{idx}, fD));
@@ -642,7 +604,6 @@ hold off;
 fprintf('Доплеровские спектры построены.\n');
 
 %% ДОП ЗАДАНИЕ 2.7: ВРЕМЯ КОГЕРЕНТНОСТИ
-fprintf('\nДОП ЗАДАНИЕ 2.7: Время когерентности\n');
 
 % Максимальные доплеровские частоты для профилей каналов
 fD_values = [5 70 300];
@@ -675,24 +636,15 @@ end
 
 %% ДОП ЗАДАНИЕ 2.8: MSE ОЦЕНКИ КАНАЛА ОТ ОСШ (EPA)
 
-fprintf('\nДОП ЗАДАНИЕ 2.8: MSE оценки канала\n');
-
-% Параметры OFDM
-NumSC_mse = 1200;
-NumGuardSC_mse = round((Nfft - NumSC_mse) / 2);
-
 % Расстановка пилотов
 pilot_step_mse = 16;
-pilot_idx_mse = 1:pilot_step_mse:NumSC_mse;
-data_idx_mse = setdiff(1:NumSC_mse, pilot_idx_mse);
+pilot_idx_mse = 1:pilot_step_mse:NumSC;
+data_idx_mse = setdiff(1:NumSC, pilot_idx_mse);
 
 nPilots_mse = length(pilot_idx_mse);
 
 % Индексы активных поднесущих после fftshift
-active_idx_mse = NumGuardSC_mse + (1:NumSC_mse);
-
-% Количество OFDM-символов для усреднения
-N_MSE_symbols = 500;
+active_idx_mse = NumGuardSC + (1:NumSC);
 
 % Диапазон ОСШ
 SNR_MSE_dB = 0:2:50;
@@ -702,111 +654,65 @@ MSE_linear = zeros(length(SNR_MSE_dB), 1);
 MSE_nearest = zeros(length(SNR_MSE_dB), 1);
 
 % Формирование истинной импульсной характеристики канала EPA
-
-% Перевод задержек путей в отсчёты
 delay_samples_mse = round(EPA_delays * Fs);
-
-% Импульсная характеристика канала
 h_EPA_true = zeros(max(delay_samples_mse) + 1, 1);
 
-% Фиксируем случайные фазы путей
 rng(1);
 path_phases_mse = 2*pi*rand(size(EPA_gains_lin));
 
 for p = 1:length(delay_samples_mse)
-
     idx_h = delay_samples_mse(p) + 1;
-
-    % Комплексная амплитуда пути
     path_gain = sqrt(EPA_gains_lin(p)) * exp(1j * path_phases_mse(p));
-
-    % Суммирование путей, попавших в один отсчёт
     h_EPA_true(idx_h) = h_EPA_true(idx_h) + path_gain;
-
 end
 
-% Нормировка энергии импульсной характеристики
 h_EPA_true = h_EPA_true / sqrt(sum(abs(h_EPA_true).^2));
-
-% Истинный частотный отклик канала EPA
 H_true_freq = fftshift(fft(h_EPA_true, Nfft));
-
-% Истинный канал на активных поднесущих
 H_true_active = H_true_freq(active_idx_mse);
 
-% Расчёт MSE для разных значений ОСШ
-
+% Матричные вычисления + правильный расчет мощности
 for k = 1:length(SNR_MSE_dB)
-
-    MSE_sum_linear = 0;
-    MSE_sum_nearest = 0;
 
     SNR_linear = 10^(SNR_MSE_dB(k) / 10);
 
-    for sym = 1:N_MSE_symbols
+    % Матричная генерация всех символов сразу
+    pilot_bits = randi([0 1], nPilots_mse * log2(M_pilot), NumOfdmSymbols);
+    mod_pilots = qammod(pilot_bits, M_pilot, 'InputType', 'bit', 'UnitAveragePower', true);
 
-        % Формирование пилотного OFDM-символа
-        pilot_bits = randi([0 1], nPilots_mse * log2(M_pilot), 1);
-        mod_pilots = qammod(pilot_bits, M_pilot,'InputType', 'bit', 'UnitAveragePower', true);
+    Sp = zeros(Nfft, NumOfdmSymbols);
+    Sp(active_idx_mse(pilot_idx_mse), :) = mod_pilots;
 
-        % OFDM-символ содержит пилоты на пилотных поднесущих
-        Sp = zeros(Nfft, 1);
-        Sp(active_idx_mse(pilot_idx_mse)) = mod_pilots;
+    % Передача через канал 
+    Sp_freq_rx = Sp .* H_true_freq;
+    Sig_rx = ifft(ifftshift(Sp_freq_rx, 1), [], 1);
+    
+    N0 = Es / SNR_linear;
+    sigma_noise = sqrt(N0 / 2);
 
-        % Передача через канал EPA
+    Sig_rx_CP = [Sig_rx(end-CP_len+1:end, :); Sig_rx];
 
-        % Применение истинного частотного отклика канала
-        Sp_freq_rx = Sp .* H_true_freq;
+    % Добавление АБГШ 
+    noise = sigma_noise * (randn(size(Sig_rx_CP)) + 1j * randn(size(Sig_rx_CP)));
+    Rx_noisy = Sig_rx_CP + noise;
 
-        % Переход во временную область
-        Sig_rx = ifft(ifftshift(Sp_freq_rx));
+    % Приём OFDM-символа 
+    Sig_rec = Rx_noisy(CP_len+1:CP_len+Nfft, :);
+    Sp_rec_noisy = fftshift(fft(Sig_rec, [], 1), 1);
 
-        % Добавление циклического префикса
-        Sig_rx_CP = [Sig_rx(end-CP_len+1:end); Sig_rx];
+    % LS-оценка канала на пилотах
+    H_est_pilots = Sp_rec_noisy(active_idx_mse(pilot_idx_mse), :) ./ mod_pilots;
 
-        % Добавление АБГШ
-        Ps = mean(abs(Sig_rx_CP).^2);
-        N0 = Ps / SNR_linear;
-        sigma_noise = sqrt(N0 / 2);
-        noise = sigma_noise *(randn(size(Sig_rx_CP)) + 1j * randn(size(Sig_rx_CP)));
-        Rx_noisy = Sig_rx_CP + noise;
+    % Интерполяция оценки канала
+    H_est_linear = interp1(pilot_idx_mse, H_est_pilots, (1:NumSC)', 'linear', 'extrap');
+    H_est_nearest = interp1(pilot_idx_mse, H_est_pilots, (1:NumSC)', 'makima', 'extrap');
 
-        % Приём OFDM-символа
+    % Расчёт MSE на информационных поднесущих
+    H_true_data = H_true_active(data_idx_mse);
+    H_linear_data = H_est_linear(data_idx_mse, :);
+    H_nearest_data = H_est_nearest(data_idx_mse, :);
 
-        % Удаление циклического префикса
-        Sig_rec = Rx_noisy(CP_len+1:CP_len+Nfft);
-
-        % FFT и переход к порядку поднесущих после fftshift
-        Sp_rec_noisy = fftshift(fft(Sig_rec));
-
-        % LS-оценка канала на пилотах
-
-        % Принятые пилоты делим на переданные
-        H_est_pilots = Sp_rec_noisy(active_idx_mse(pilot_idx_mse))./ mod_pilots;
-
-        % Интерполяция оценки канала
-
-        % Линейная интерполяция
-        H_est_linear = interp1(pilot_idx_mse, H_est_pilots,(1:NumSC_mse)', 'linear', 'extrap');
-
-        % Интерполяция макима
-        H_est_nearest = interp1(pilot_idx_mse, H_est_pilots,(1:NumSC_mse)', 'makima', 'extrap');
-
-        % Расчёт MSE на информационных поднесущих
-        H_true_data = H_true_active(data_idx_mse);
-
-        H_linear_data = H_est_linear(data_idx_mse);
-        H_nearest_data = H_est_nearest(data_idx_mse);
-
-        MSE_sum_linear = MSE_sum_linear + mean(abs(H_linear_data - H_true_data).^2);
-
-        MSE_sum_nearest = MSE_sum_nearest + mean(abs(H_nearest_data - H_true_data).^2);
-
-    end
-
-    % Усреднение по OFDM-символам
-    MSE_linear(k) = MSE_sum_linear / N_MSE_symbols;
-    MSE_nearest(k) = MSE_sum_nearest / N_MSE_symbols;
+    MSE_linear(k) = mean(abs(H_linear_data - H_true_data).^2, 'all');
+    MSE_nearest(k) = mean(abs(H_nearest_data - H_true_data).^2, 'all');
 
 end
 
