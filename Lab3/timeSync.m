@@ -1,4 +1,3 @@
-мяу
 clc; clear; close all;
 
 Nfft = 2048;
@@ -86,7 +85,6 @@ for i_tau = 1:length(tau_cases)
             end
             BER(k) = errorBits/totalBits;
         end
-        
         idx_line = (i_tau-1)*2 + i_eq;
         semilogy(SNR_dB, BER, '-o', 'Color', colors{idx_line}, 'Marker', markers{idx_line}, ...
             'LineWidth',1.5, 'MarkerSize',5, ...
@@ -103,72 +101,74 @@ set(gca, 'YScale', 'log');
 ylim([1e-5 1]);
 hold off;
 
-%% ПУНКТ 2: АКФ при разных N_symb (фиксированный SNR)
+%% ПУНКТ 2: АКФ при разных N_symb (фиксированный SNR) с усред
 
 SNR_fixed = 10;
 N_symb_list = [3, 10, 30, 100];
 tau_true = 50;
+N_realizations = 50;  % Число реализаций для усреднения АКФ
 
 figure(2); clf; hold on; grid on;
 
 for j = 1:length(N_symb_list)
     N_symb = N_symb_list(j);
     
-    % генерация данных
-    data_bits = randi([0 1], nDataSymbols*kDataBits, N_symb);
-    mod_data = qammod(data_bits, M_data, 'InputType','bit','UnitAveragePower',true);
-    pilot_bits = randi([0 1], nPilots*kPilotBits, N_symb);
-    mod_pilots = qammod(pilot_bits, M_pilot, 'InputType','bit','UnitAveragePower',true);
-    
-    ofdm_symbols = zeros(Nfft, N_symb);
-    ofdm_symbols(pilot_idx,:) = mod_pilots;
-    ofdm_symbols(data_idx,:) = mod_data;
-    ofdm_time = ifft(ifftshift(ofdm_symbols,1), Nfft, 1);
-    cp = ofdm_time(end-CP+1:end,:);
-    tx_vector = reshape([cp; ofdm_time], [], 1);
-    
-    % временной сдвиг
-    shifted_signal = circshift(tx_vector, tau_true);
-    N0 = Ps / 10^(SNR_fixed/10);
-    sigma = sqrt(N0/2);
-    noise = sigma*(randn(size(shifted_signal)) + 1j*randn(size(shifted_signal)));
-    rx_signal = shifted_signal + noise;
-    
-    % АКФ по ЦП
-    %задержка в пределах CP
     AllDelay = 0:(CP-1);
-    ACF = zeros(length(AllDelay), 1);
+    ACF_avg = zeros(length(AllDelay), 1);  
     
-    for j_delay = AllDelay
-        for j_symb = 0:(N_symb-2)  % отбрасываем последний символ
-            % Начало текущего символа
-            sym_start = j_symb * (CP + Nfft) + 1;
-            
-            % Левое окно (CP отсчётов)
-            left_idx = sym_start + j_delay + (0:CP-1);
-            
-            % Правое окно (CP отсчётов, сдвинутое на Nfft)
-            right_idx = left_idx + Nfft;
-            
-            if max(right_idx) <= length(rx_signal)
-                left = rx_signal(left_idx);
-                right = rx_signal(right_idx);
-                ACF(j_delay+1) = ACF(j_delay+1) + sum(left .* conj(right));
+    for r = 1:N_realizations
+        % генерация данных (новая для каждой реализации)
+        data_bits = randi([0 1], nDataSymbols*kDataBits, N_symb);
+        mod_data = qammod(data_bits, M_data, 'InputType','bit','UnitAveragePower',true);
+        pilot_bits = randi([0 1], nPilots*kPilotBits, N_symb);
+        mod_pilots = qammod(pilot_bits, M_pilot, 'InputType','bit','UnitAveragePower',true);
+        
+        ofdm_symbols = zeros(Nfft, N_symb);
+        ofdm_symbols(pilot_idx,:) = mod_pilots;
+        ofdm_symbols(data_idx,:) = mod_data;
+        ofdm_time = ifft(ifftshift(ofdm_symbols,1), Nfft, 1);
+        cp = ofdm_time(end-CP+1:end,:);
+        tx_vector = reshape([cp; ofdm_time], [], 1);
+        
+        % временной сдвиг
+        shifted_signal = circshift(tx_vector, tau_true);
+        N0 = Ps / 10^(SNR_fixed/10);
+        sigma = sqrt(N0/2);
+        noise = sigma*(randn(size(shifted_signal)) + 1j*randn(size(shifted_signal)));
+        rx_signal = shifted_signal + noise;
+        
+        % АКФ по ЦП для данной реализации
+        ACF = zeros(length(AllDelay), 1);
+        
+        for j_delay = AllDelay
+            for j_symb = 0:(N_symb-2)  % отбрасываем последний символ
+                sym_start = j_symb * (CP + Nfft) + 1;
+                left_idx = sym_start + j_delay + (0:CP-1);
+                right_idx = left_idx + Nfft;
+                
+                if max(right_idx) <= length(rx_signal)
+                    left = rx_signal(left_idx);
+                    right = rx_signal(right_idx);
+                    ACF(j_delay+1) = ACF(j_delay+1) + sum(left .* conj(right));
+                end
             end
         end
+        
+        ACF = ACF / (N_symb - 1);
+        ACF_avg = ACF_avg + ACF;  % Накопление
     end
     
-    ACF = ACF / (N_symb - 1);
+    ACF_avg = ACF_avg / N_realizations;  % Усреднение
     
-    plot(AllDelay, abs(ACF), 'LineWidth', 1.3, 'DisplayName', sprintf('N_symb = %d', N_symb));
+    plot(AllDelay, abs(ACF_avg), 'LineWidth', 1.3, 'DisplayName', sprintf('N_symb = %d', N_symb));
     
-    [~, peak_idx] = max(abs(ACF));
+    [~, peak_idx] = max(abs(ACF_avg));
     fprintf('N_symb=%d: пик АКФ на задержке %d (истинная τ=%d)\n', ...
         N_symb, AllDelay(peak_idx), tau_true);
 end
 
 xlabel('Отсчёт задержки'); ylabel('|АКФ|');
-title(sprintf('Пункт 2: АКФ при разных N_symb (SNR=%d дБ, τ=%d)', SNR_fixed, tau_true));
+title(sprintf('Пункт 2: АКФ при разных N_symb (SNR=%d дБ, τ=%d, усреднено по %d реализациям)', SNR_fixed, tau_true, N_realizations));
 legend('Location','best'); hold off;
 
 %% ПУНКТ 3: BER при разных N_symb (синхронизация по ЦП)
@@ -264,12 +264,13 @@ set(gca, 'YScale', 'log');
 ylim([1e-5 1]);
 hold off;
 
-%% ПУНКТ 4,5: ВРЕМЕННАЯ СИНХРОНИЗАЦИЯ ПО АЛГОРИТМУ МИННА
+%% ПУНКТ 4: МЕТРИКА МИННА с усред
 
 L = Nfft/4; % длина одного сегмента
 tau_true = 50; % истинная временная задержка
 MaxDelay = 200; % максимальная исследуемая задержка
 SNR_fixed = 17; % SNR для 4 пункта
+N_realizations_minn = 50;  % Число реализаций для усреднения метрики
 
 pn = comm.PNSequence( ...
     'Polynomial', [9 5 0], ...
@@ -280,130 +281,102 @@ A_bits = pn();
 A = 2*A_bits - 1;            
 sync_symbol = [A; A; -A; -A];
 
-fprintf('Длина сегмента A: %d\n', L);
-fprintf('Длина синхросимвола: %d\n', length(sync_symbol));
-fprintf('\n 4: МЕТРИКА МИННА \n');
-
-N_symb = NumOfdmSymbols;
-
-% Генерация информационных данных
-data_bits = randi([0 1], nDataSymbols*kDataBits, N_symb);
-
-mod_data = qammod(data_bits, M_data,'InputType','bit','UnitAveragePower',true);
-
-pilot_bits = randi([0 1], nPilots*kPilotBits, N_symb);
-
-mod_pilots = qammod(pilot_bits, M_pilot,'InputType','bit','UnitAveragePower',true);
-
-% Формирование OFDM-символов
-ofdm_symbols = zeros(Nfft, N_symb);
-ofdm_symbols(pilot_idx,:) = mod_pilots;
-ofdm_symbols(data_idx,:) = mod_data;
-ofdm_time = ifft(ifftshift(ofdm_symbols,1), Nfft, 1);
-
-% Добавление циклического префикса
-cp = ofdm_time(end-CP+1:end,:);
-tx_payload = reshape([cp; ofdm_time], [], 1);
-
-% Нормировка мощности синхросимвола
-sync_symbol_current = sync_symbol; 
-
-% Добавление преамбулы перед информационными символами
-tx_signal = [sync_symbol_current; tx_payload];
-
-% Внесение временной задержки
-shifted_signal = [zeros(tau_true,1); tx_signal];
-
-% Добавление AWGN
-N0 = Ps / 10^(SNR_fixed/10);
-sigma = sqrt(N0/2);
-noise = sigma*(randn(size(shifted_signal)) + 1j*randn(size(shifted_signal)));
-rx_signal = shifted_signal + noise;
-
 AllDelay = 0:MaxDelay;
-Metric = zeros(length(AllDelay),1);
+Metric_avg = zeros(length(AllDelay), 1);  
 
-for j = 1:length(AllDelay)
+for r = 1:N_realizations_minn
+    % Генерация информационных данных (новая для каждой реализации)
+    data_bits = randi([0 1], nDataSymbols*kDataBits, N_symb);
+    mod_data = qammod(data_bits, M_data,'InputType','bit','UnitAveragePower',true);
+    pilot_bits = randi([0 1], nPilots*kPilotBits, N_symb);
+    mod_pilots = qammod(pilot_bits, M_pilot,'InputType','bit','UnitAveragePower',true);
 
-    d = AllDelay(j);
+    % Формирование OFDM-символов
+    ofdm_symbols = zeros(Nfft, N_symb);
+    ofdm_symbols(pilot_idx,:) = mod_pilots;
+    ofdm_symbols(data_idx,:) = mod_data;
+    ofdm_time = ifft(ifftshift(ofdm_symbols,1), Nfft, 1);
 
-    % Первая половина синхросимвола [A A]
-    left1 = rx_signal(d + (1:L)).';
-    right1 = rx_signal(d + L + (1:L)).';
+    % Добавление циклического префикса
+    cp = ofdm_time(end-CP+1:end,:);
+    tx_payload = reshape([cp; ofdm_time], [], 1);
 
-    % Вторая половина синхросимвола [-A -A]
-    left2 = rx_signal(d + 2*L + (1:L)).';
-    right2 = rx_signal(d + 3*L + (1:L)).';
+    % Добавление преамбулы перед информационными символами
+    tx_signal = [sync_symbol; tx_payload];
 
-    % Корреляция между сегментами первой половины
-    P1 = conv(left1, fliplr(conj(right1)), 'valid');
+    % Внесение временной задержки
+    shifted_signal = [zeros(tau_true,1); tx_signal];
 
-    % Корреляция между сегментами второй половины
-    P2 = conv(left2, fliplr(conj(right2)), 'valid');
+    % Добавление AWGN
+    N0 = Ps / 10^(SNR_fixed/10);
+    sigma = sqrt(N0/2);
+    noise = sigma*(randn(size(shifted_signal)) + 1j*randn(size(shifted_signal)));
+    rx_signal = shifted_signal + noise;
 
-    % Суммарная корреляция
-    P = P1 + P2;
+    % Вычисление метрики Минна для данной реализации
+    Metric = zeros(length(AllDelay), 1);
 
-    % Энергии
-    E1 = sum(abs(left1).^2) + sum(abs(right1).^2);
-    E2 = sum(abs(left2).^2) + sum(abs(right2).^2);
+    for j = 1:length(AllDelay)
+        d = AllDelay(j);
 
-    % Нормированная метрика Минна
-    Metric(j) = abs(P)^2 / (E1*E2);
+        % Первая половина синхросимвола [A A]
+        left1 = rx_signal(d + (1:L)).';
+        right1 = rx_signal(d + L + (1:L)).';
 
+        % Вторая половина синхросимвола [-A -A]
+        left2 = rx_signal(d + 2*L + (1:L)).';
+        right2 = rx_signal(d + 3*L + (1:L)).';
+
+        % Корреляция между сегментами первой половины
+        P1 = conv(left1, fliplr(conj(right1)), 'valid');
+
+        % Корреляция между сегментами второй половины
+        P2 = conv(left2, fliplr(conj(right2)), 'valid');
+
+        % Суммарная корреляция
+        P = P1 + P2;
+
+        % Энергии
+        E1 = sum(abs(left1).^2) + sum(abs(right1).^2);
+        E2 = sum(abs(left2).^2) + sum(abs(right2).^2);
+
+        % Нормированная метрика Минна
+        Metric(j) = abs(P)^2 / (E1*E2);
+    end
+    
+    Metric_avg = Metric_avg + Metric;  % Накопление
 end
 
-% Определение максимума метрики
-[~, peak_idx] = max(Metric);
+Metric_avg = Metric_avg / N_realizations_minn;  % Усреднение
 
+% Определение максимума усреднённой метрики
+[~, peak_idx] = max(Metric_avg);
 Delay = AllDelay(peak_idx);
 
-fprintf('\nИстинная задержка: %d отсчетов\n', tau_true);
-fprintf('Оцененная задержка: %d отсчетов\n', Delay);
-fprintf('Максимум метрики: %.6f\n', Metric(peak_idx));
-
-
 figure(4); clf;
-
-plot(AllDelay, Metric, 'b', 'LineWidth',1.5);
+plot(AllDelay, Metric_avg, 'b', 'LineWidth', 1.5);
 hold on;
-
-xline(tau_true, '--r', 'Истинная задержка', 'LineWidth',1.5);
-
-xline(Delay, '--g', 'Оцененная задержка', 'LineWidth',1.5);
-
+xline(tau_true, '--r', 'Истинная задержка', 'LineWidth', 1.5);
+xline(Delay, '--g', 'Оцененная задержка', 'LineWidth', 1.5);
 grid on;
-
 xlabel('Временная задержка d, отсчёты');
 ylabel('M(d)');
-
-title(sprintf('Метрика Минна (SNR = %d дБ)',SNR_fixed));
-
-legend('Метрика Минна', 'Истинная задержка', 'Оцененная задержка','Location','best');
-
+title(sprintf('Метрика Минна (SNR = %d дБ, усреднено по %d реализациям)', SNR_fixed, N_realizations_minn));
+legend('Метрика Минна', 'Истинная задержка', 'Оцененная задержка', 'Location', 'best');
 hold off;
 
-fprintf('\n 5: BER ПО АЛГОРИТМУ МИННА \n');
-
 eq_cases = [0 1];
-
 eq_labels = {'Без эквалайзера', 'С эквалайзером'};
-
 figure(5); clf;
 hold on;
 grid on;
-
 for i_eq = 1:length(eq_cases)
 
     use_eq = eq_cases(i_eq);
-
     BER = zeros(1,length(SNR_dB));
-
     for k = 1:length(SNR_dB)
-
         errorBits = 0;
         totalBits = 0;
-
         while errorBits < Naverage
 
             data_bits = randi([0 1], nDataSymbols*kDataBits, NumOfdmSymbols);
@@ -418,9 +391,8 @@ for i_eq = 1:length(eq_cases)
             cp = ofdm_time(end-CP+1:end,:);
 
             tx_payload = reshape([cp; ofdm_time], [], 1);
-            sync_symbol_current = sync_symbol; 
 
-            tx_signal = [sync_symbol_current; tx_payload];
+            tx_signal = [sync_symbol; tx_payload];
 
             shifted_signal = [zeros(tau_true,1); tx_signal];
 
@@ -428,8 +400,6 @@ for i_eq = 1:length(eq_cases)
             sigma = sqrt(N0/2);
             noise = sigma*(randn(size(shifted_signal)) + 1j*randn(size(shifted_signal)));
             rx_signal = shifted_signal + noise;
-
-            AllDelay = 0:MaxDelay;
 
             Metric = zeros(length(AllDelay),1);
 
@@ -463,11 +433,11 @@ for i_eq = 1:length(eq_cases)
             N_total = (Nfft+CP)*NumOfdmSymbols;
             % Проверка границ массива
             if payload_start + N_total - 1 > length(rx_signal)
-                error(['Недостаточно отсчетов для извлечения ', 'OFDM-сигнала. Оцененная задержка = %d.'], Delay);
+                continue;  
             end
 
             % Извлечение полезного сигнала
-            Signal_sync = rx_signal(payload_start :payload_start+N_total-1);
+            Signal_sync = rx_signal(payload_start : payload_start+N_total-1);
 
             rx_matrix = reshape(Signal_sync, Nfft+CP, NumOfdmSymbols);
 
@@ -499,10 +469,9 @@ semilogy(SNR_dB, berawgn(SNR_dB,'qam',M_data), '--k', 'LineWidth',2,'DisplayName
 xlabel('SNR (дБ)');
 ylabel('BER');
 
-title(sprintf(['Помехоустойчивость OFDM при временной ', 'синхронизации по алгоритму Минна (CP=%d)'],CP));
+title(sprintf('Помехоустойчивость OFDM при временной синхронизации по алгоритму Минна (CP=%d)',CP));
 legend('Location','southwest');
 set(gca,'YScale','log');
 ylim([1e-5 1]);
 grid on;
 hold off;
-
